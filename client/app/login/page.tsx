@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
+import { authApi } from "@/lib/api";
 import toast from "react-hot-toast";
 import { Eye, EyeOff, LogIn, Loader2 } from "lucide-react";
 
@@ -33,11 +33,7 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginForm) => {
     setLoading(true);
     try {
-      const res = await apiFetch("/auth/login", {
-        method: "POST",
-        body: data,
-      });
-      localStorage.setItem("token", res.token);
+      await authApi.login(data);
       toast.success("Welcome back!");
       router.push("/dashboard");
     } catch (err: any) {

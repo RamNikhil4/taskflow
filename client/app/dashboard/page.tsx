@@ -70,7 +70,9 @@ export default function DashboardPage() {
       if (filterStatus) params.set("status", filterStatus);
       if (filterPriority) params.set("priority", filterPriority);
       const qs = params.toString();
-      const res = await apiFetch(`/tasks${qs ? `?${qs}` : ""}`);
+      const res = await apiFetch<{ tasks: Task[] }>(
+        `/tasks${qs ? `?${qs}` : ""}`,
+      );
       setTasks(res.tasks);
     } catch {
       toast.error("Failed to load tasks");
@@ -78,19 +80,14 @@ export default function DashboardPage() {
   }, [search, filterStatus, filterPriority]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-
     const init = async () => {
       try {
-        const profileRes = await apiFetch("/user/profile");
+        const profileRes = await apiFetch<{ user: UserProfile }>(
+          "/user/profile",
+        );
         setUser(profileRes.user);
         await fetchTasks();
       } catch {
-        localStorage.removeItem("token");
         router.replace("/login");
       } finally {
         setLoading(false);
@@ -107,7 +104,6 @@ export default function DashboardPage() {
     try {
       await apiFetch("/auth/logout", { method: "POST" });
     } catch {}
-    localStorage.removeItem("token");
     router.replace("/login");
   };
 
@@ -184,7 +180,7 @@ export default function DashboardPage() {
   const saveProfile = async () => {
     setSavingProfile(true);
     try {
-      const res = await apiFetch("/user/profile", {
+      const res = await apiFetch<{ user: UserProfile }>("/user/profile", {
         method: "PUT",
         body: { name: editName, email: editEmail },
       });

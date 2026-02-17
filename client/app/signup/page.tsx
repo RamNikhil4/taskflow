@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
+import { authApi } from "@/lib/api";
 import toast from "react-hot-toast";
 import { Eye, EyeOff, UserPlus, Loader2 } from "lucide-react";
 
@@ -40,11 +40,11 @@ export default function SignupPage() {
   const onSubmit = async (data: SignupForm) => {
     setLoading(true);
     try {
-      const res = await apiFetch("/auth/signup", {
-        method: "POST",
-        body: { name: data.name, email: data.email, password: data.password },
+      await authApi.signup({
+        name: data.name,
+        email: data.email,
+        password: data.password,
       });
-      localStorage.setItem("token", res.token);
       toast.success("Account created!");
       router.push("/dashboard");
     } catch (err: any) {
