@@ -1,10 +1,17 @@
 import { Router, Request, Response } from "express";
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import { db } from "../config/db";
 import { users } from "../db/schema/users";
-import { eq } from "drizzle-orm";
+import { refreshTokens } from "../db/schema/refreshTokens";
+import { eq, and, gt } from "drizzle-orm";
 import { z } from "zod";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  setAuthCookies,
+  clearAuthCookies,
+  hashToken,
+} from "../utils/tokens";
 
 const router = Router();
 
@@ -19,23 +26,19 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-// POST /auth/signup
 router.post("/signup", async (req: Request, res: Response): Promise<void> => {
   try {
     const body = signupSchema.safeParse(req.body);
     if (!body.success) {
-      res
-        .status(400)
-        .json({
-          message: "Validation error",
-          errors: body.error.flatten().fieldErrors,
-        });
+      res.status(400).json({
+        message: "Validation error",
+        errors: body.error.flatten().fieldErrors,
+      });
       return;
     }
 
     const { name, email, password } = body.data;
 
-    // Check if user already exists
     const existing = await db
       .select()
       .from(users)
@@ -52,35 +55,25 @@ router.post("/signup", async (req: Request, res: Response): Promise<void> => {
       .values({ name, email, password: hashedPassword })
       .returning({ id: users.id, name: users.name, email: users.email });
 
-    const token = jwt.sign({ userId: newUser.id }, process.env.JWT_SECRET!, {
-      expiresIn: "7d",
-    });
+    const accessToken = generateAccessToken(newUser.id);
+    const refreshToken = await generateRefreshToken(newUser.id);
+    setAuthCookies(res, accessToken, refreshToken);
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
-    res.status(201).json({ user: newUser, token });
+    res.status(201).json({ user: newUser });
   } catch (error) {
     console.error("Signup error:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
 
-// POST /auth/login
 router.post("/login", async (req: Request, res: Response): Promise<void> => {
   try {
     const body = loginSchema.safeParse(req.body);
     if (!body.success) {
-      res
-        .status(400)
-        .json({
-          message: "Validation error",
-          errors: body.error.flatten().fieldErrors,
-        });
+      res.status(400).json({
+        message: "Validation error",
+        errors: body.error.flatten().fieldErrors,
+      });
       return;
     }
 
@@ -98,20 +91,12 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET!, {
-      expiresIn: "7d",
-    });
-
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    const accessToken = generateAccessToken(user.id);
+    const refreshToken = await generateRefreshToken(user.id);
+    setAuthCookies(res, accessToken, refreshToken);
 
     res.json({
       user: { id: user.id, name: user.name, email: user.email },
-      token,
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -119,9 +104,53 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// POST /auth/logout
-router.post("/logout", (_req: Request, res: Response): void => {
-  res.clearCookie("token");
+router.post("/refresh", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawToken = req.cookies?.refreshToken;
+    if (!rawToken) {
+      res.status(401).json({ message: "No refresh token" });
+      return;
+    }
+
+    const hashed = hashToken(rawToken);
+
+    const [stored] = await db
+      .select()
+      .from(refreshTokens)
+      .where(
+        and(
+          eq(refreshTokens.token, hashed),
+          gt(refreshTokens.expiresAt, new Date()),
+        ),
+      );
+
+    if (!stored) {
+      clearAuthCookies(res);
+      res.status(401).json({ message: "Invalid or expired refresh token" });
+      return;
+    }
+
+    const accessToken = generateAccessToken(stored.userId);
+    const newRefreshToken = await generateRefreshToken(stored.userId);
+    setAuthCookies(res, accessToken, newRefreshToken);
+
+    res.json({ message: "Token refreshed" });
+  } catch (error) {
+    console.error("Refresh error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+router.post("/logout", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawToken = req.cookies?.refreshToken;
+    if (rawToken) {
+      const hashed = hashToken(rawToken);
+      await db.delete(refreshTokens).where(eq(refreshTokens.token, hashed));
+    }
+  } catch {}
+
+  clearAuthCookies(res);
   res.json({ message: "Logged out successfully" });
 });
 
